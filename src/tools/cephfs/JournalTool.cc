@@ -711,12 +711,12 @@ int JournalTool::scavenge_dentries(
           write_dentry = old_fnode_version < lump.fnode.version;
         } else if (dentry_type == 'I') {
           // Read out inode version to compare with backing store
-          InodeStore inode;
+          InodeStore inode(NULL, true);
           inode.decode_bare(q);
           dout(4) << "decoded embedded inode version "
-            << inode.inode.version << " vs fullbit version "
-            << fb.inode.version << dendl;
-          if (inode.inode.version < fb.inode.version) {
+            << inode.inode->version << " vs fullbit version "
+            << fb.inode->version << dendl;
+          if (inode.inode->version < fb.inode->version) {
             write_dentry = true;
           }
         } else {
@@ -738,7 +738,7 @@ int JournalTool::scavenge_dentries(
 
         // Record for writing to RADOS
         write_vals[key] = dentry_bl;
-        consumed_inos->insert(fb.inode.ino);
+        consumed_inos->insert(fb.inode->ino);
       }
     }
 
@@ -825,7 +825,7 @@ int JournalTool::scavenge_dentries(
   for (list<ceph::shared_ptr<EMetaBlob::fullbit> >::const_iterator p =
        metablob.roots.begin(); p != metablob.roots.end(); ++p) {
     EMetaBlob::fullbit const &fb = *(*p);
-    inodeno_t ino = fb.inode.ino;
+    inodeno_t ino = fb.inode->ino;
     dout(4) << "updating root 0x" << std::hex << ino << std::dec << dendl;
 
     object_t root_oid = InodeStore::get_object_name(ino, frag_t(), ".inode");
@@ -839,7 +839,7 @@ int JournalTool::scavenge_dentries(
       write_root_ino = true;
     } else if (r >= 0) {
       r = 0;
-      InodeStore old_inode;
+      InodeStore old_inode(NULL, true);
       dout(4) << "root exists, will modify (" << old_root_ino_bl.length()
         << ")" << dendl;
       bufferlist::iterator inode_bl_iter = old_root_ino_bl.begin(); 
@@ -849,7 +849,7 @@ int JournalTool::scavenge_dentries(
         dout(4) << "magic ok" << dendl;
         old_inode.decode(inode_bl_iter);
 
-        if (old_inode.inode.version < fb.inode.version) {
+        if (old_inode.inode->version < fb.inode->version) {
           write_root_ino = true;
         }
       } else {
@@ -864,7 +864,7 @@ int JournalTool::scavenge_dentries(
 
     if (write_root_ino && !dry_run) {
       dout(4) << "writing root ino " << root_oid.name
-               << " version " << fb.inode.version << dendl;
+               << " version " << fb.inode->version << dendl;
 
       // Compose: root ino format is magic,InodeStore(bare=false)
       bufferlist new_root_ino_bl;
@@ -892,7 +892,7 @@ int JournalTool::replay_offline(EMetaBlob const &metablob, bool const dry_run)
   // Replay roots
   for (list<ceph::shared_ptr<EMetaBlob::fullbit> >::const_iterator p = metablob.roots.begin(); p != metablob.roots.end(); ++p) {
     EMetaBlob::fullbit const &fb = *(*p);
-    inodeno_t ino = fb.inode.ino;
+    inodeno_t ino = fb.inode->ino;
     dout(4) << "updating root 0x" << std::hex << ino << std::dec << dendl;
 
     object_t root_oid = InodeStore::get_object_name(ino, frag_t(), ".inode");

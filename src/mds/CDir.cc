@@ -267,7 +267,7 @@ bool CDir::check_rstats()
   for (map_t::iterator i = items.begin(); i != items.end(); ++i) {
     if (i->second->get_linkage()->is_primary() &&
 	i->second->last == CEPH_NOSNAP) {
-      sub_info.add(i->second->get_linkage()->inode->inode.accounted_rstat);
+      sub_info.add(i->second->get_linkage()->inode->get_inode().accounted_rstat);
     }
   }
 
@@ -280,7 +280,7 @@ bool CDir::check_rstats()
     for (map_t::iterator i = items.begin(); i != items.end(); ++i) {
       if (i->second->get_linkage()->is_primary()) {
         dout(1) << *(i->second) << " "
-                << i->second->get_linkage()->inode->inode.accounted_rstat
+                << i->second->get_linkage()->inode->get_inode().accounted_rstat
                 << dendl;
       }
     }
@@ -676,7 +676,7 @@ void CDir::remove_null_dentries() {
 void CDir::try_remove_dentries_for_stray()
 {
   dout(10) << __func__ << dendl;
-  assert(inode->inode.nlink == 0);
+  assert(inode->get_nlink() == 0);
 
   CDir::map_t::iterator p = items.begin();
   while (p != items.end()) {
@@ -779,7 +779,7 @@ void CDir::steal_dentry(CDentry *dn)
 
     if (dn->get_linkage()->is_primary()) {
       CInode *in = dn->get_linkage()->get_inode();
-      inode_t *pi = in->get_projected_inode();
+      const const_inode_ref& pi = in->get_projected_inode();
       if (dn->get_linkage()->get_inode()->is_dir())
 	fnode.fragstat.nsubdirs++;
       else
@@ -1050,7 +1050,7 @@ void CDir::merge(list<CDir*>& subs, list<MDSInternalContextBase*>& waiters, bool
 void CDir::resync_accounted_fragstat()
 {
   fnode_t *pf = get_projected_fnode();
-  inode_t *pi = inode->get_projected_inode();
+  const const_inode_ref& pi = inode->get_projected_inode();
 
   if (pf->accounted_fragstat.version != pi->dirstat.version) {
     pf->fragstat.version = pi->dirstat.version;
@@ -1065,7 +1065,7 @@ void CDir::resync_accounted_fragstat()
 void CDir::resync_accounted_rstat()
 {
   fnode_t *pf = get_projected_fnode();
-  inode_t *pi = inode->get_projected_inode();
+  const const_inode_ref& pi = inode->get_projected_inode();
   
   if (pf->accounted_rstat.version != pi->rstat.version) {
     pf->rstat.version = pi->rstat.version;
@@ -1380,7 +1380,7 @@ void CDir::fetch(MDSInternalContextBase *c, const string& want_dn, bool ignore_a
   }
 
   // unlinked directory inode shouldn't have any entry
-  if (inode->inode.nlink == 0) {
+  if (inode->get_nlink() == 0) {
     dout(7) << "fetch dirfrag for unlinked directory, mark complete" << dendl;
     if (get_version() == 0)
       set_version(1);
@@ -1653,7 +1653,7 @@ void CDir::_omap_fetched(bufferlist& hdrbl, map<string, bufferlist>& omap,
       // inode
       
       // Load inode data before looking up or constructing CInode
-      InodeStore inode_data;
+      InodeStore inode_data(NULL, true);
       inode_data.decode_bare(q);
       
       if (stale)
@@ -1674,20 +1674,21 @@ void CDir::_omap_fetched(bufferlist& hdrbl, map<string, bufferlist>& omap,
 
       if (!dn || undef_inode) {
 	// add inode
-	CInode *in = cache->get_inode(inode_data.inode.ino, last);
+	CInode *in = cache->get_inode(inode_data.inode->ino, last);
 	if (!in || undef_inode) {
 	  if (undef_inode && in)
 	    in->first = first;
 	  else
-	    in = new CInode(cache, true, first, last);
+	    in = new CInode(cache, true, first, last, &inode_data);
 	  
 	  in->inode = inode_data.inode;
+	  in->xattrs = inode_data.xattrs;
+
 	  // symlink?
 	  if (in->is_symlink()) 
 	    in->symlink = inode_data.symlink;
 	  
 	  in->dirfragtree.swap(inode_data.dirfragtree);
-	  in->xattrs.swap(inode_data.xattrs);
 	  in->decode_snap_blob(inode_data.snap_blob);
 	  in->old_inodes.swap(inode_data.old_inodes);
 	  if (snaps)
@@ -1699,12 +1700,12 @@ void CDir::_omap_fetched(bufferlist& hdrbl, map<string, bufferlist>& omap,
 	  }
 	  dout(12) << "_fetched  got " << *dn << " " << *in << dendl;
 
-	  if (in->inode.is_dirty_rstat())
+	  if (in->get_inode().is_dirty_rstat())
 	    in->mark_dirty_rstat();
 
 	  if (stray) {
 	    dn->state_set(CDentry::STATE_STRAY);
-	    if (in->inode.nlink == 0)
+	    if (in->get_nlink() == 0)
 	      in->state_set(CInode::STATE_ORPHAN);
 	  }
 
@@ -1713,15 +1714,15 @@ void CDir::_omap_fetched(bufferlist& hdrbl, map<string, bufferlist>& omap,
 	  //num_new_inodes_loaded++;
 	} else {
 	  dout(0) << "_fetched  badness: got (but i already had) " << *in
-		  << " mode " << in->inode.mode
-		  << " mtime " << in->inode.mtime << dendl;
+		  << " mode " << in->get_inode().mode
+		  << " mtime " << in->get_inode().mtime << dendl;
 	  string dirpath, inopath;
 	  this->inode->make_path_string(dirpath);
 	  in->make_path_string(inopath);
-	  clog->error() << "loaded dup inode " << inode_data.inode.ino
-	    << " [" << first << "," << last << "] v" << inode_data.inode.version
+	  clog->error() << "loaded dup inode " << inode_data.inode->ino
+	    << " [" << first << "," << last << "] v" << inode_data.inode->version
 	    << " at " << dirpath << "/" << dname
-	    << ", but inode " << in->vino() << " v" << in->inode.version
+	    << ", but inode " << in->vino() << " v" << in->get_version()
 	    << " already exists at " << inopath << "\n";
 	  continue;
 	}
@@ -1808,7 +1809,7 @@ void CDir::commit(version_t want, MDSInternalContextBase *c, bool ignore_authpin
   assert(is_auth());
   assert(ignore_authpinnability || can_auth_pin());
 
-  if (inode->inode.nlink == 0) {
+  if (inode->get_nlink() == 0) {
     dout(7) << "commit dirfrag for unlinked directory, mark clean" << dendl;
     try_remove_dentries_for_stray();
     if (c)

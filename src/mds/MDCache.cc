@@ -332,29 +332,28 @@ void MDCache::init_layouts()
   }
 }
 
-void MDCache::create_unlinked_system_inode(CInode *in, inodeno_t ino,
-                                              int mode) const
+void MDCache::create_unlinked_system_inode(CInode *in, inodeno_t ino, int mode) const
 {
-  in->inode.ino = ino;
-  in->inode.version = 1;
-  in->inode.xattr_version = 1;
-  in->inode.mode = 0500 | mode;
-  in->inode.size = 0;
-  in->inode.ctime = 
-    in->inode.mtime = ceph_clock_now(g_ceph_context);
-  in->inode.nlink = 1;
-  in->inode.truncate_size = -1ull;
+  inode_t &inode = const_cast<inode_t&>(in->get_inode());
+  inode.ino = ino;
+  inode.version = 1;
+  inode.xattr_version = 1;
+  inode.mode = 0500 | mode;
+  inode.size = 0;
+  inode.ctime = inode.mtime = ceph_clock_now(g_ceph_context);
+  inode.nlink = 1;
+  inode.truncate_size = -1ull;
 
-  memset(&in->inode.dir_layout, 0, sizeof(in->inode.dir_layout));
-  if (in->inode.is_dir()) {
-    memset(&in->inode.layout, 0, sizeof(in->inode.layout));
-    in->inode.dir_layout.dl_dir_hash = g_conf->mds_default_dir_hash;
-    ++in->inode.rstat.rsubdirs;
+  memset(&inode.dir_layout, 0, sizeof(inode.dir_layout));
+  if (inode.is_dir()) {
+    memset(&inode.layout, 0, sizeof(inode.layout));
+    inode.dir_layout.dl_dir_hash = g_conf->mds_default_dir_hash;
+    ++inode.rstat.rsubdirs;
   } else {
-    in->inode.layout = default_file_layout;
-    ++in->inode.rstat.rfiles;
+    inode.layout = default_file_layout;
+    ++inode.rstat.rfiles;
   }
-  in->inode.accounted_rstat = in->inode.rstat;
+  inode.accounted_rstat = inode.rstat;
 
   if (in->is_base()) {
     if (in->is_root())
@@ -378,10 +377,11 @@ CInode *MDCache::create_system_inode(inodeno_t ino, int mode)
 
 CInode *MDCache::create_root_inode()
 {
-  CInode *i = create_system_inode(MDS_INO_ROOT, S_IFDIR|0755);
-  i->inode.layout = default_file_layout;
-  i->inode.layout.fl_pg_pool = mds->mdsmap->get_first_data_pool();
-  return i;
+  CInode *in = create_system_inode(MDS_INO_ROOT, S_IFDIR|0755);
+  inode_t &inode = const_cast<inode_t&>(in->get_inode());
+  inode.layout = default_file_layout;
+  inode.layout.fl_pg_pool = mds->mdsmap->get_first_data_pool();
+  return in;
 }
 
 void MDCache::create_empty_hierarchy(MDSGather *gather)
@@ -397,10 +397,11 @@ void MDCache::create_empty_hierarchy(MDSGather *gather)
   rootdir->fnode.accounted_fragstat = rootdir->fnode.fragstat;
   rootdir->fnode.accounted_rstat = rootdir->fnode.rstat;
 
-  root->inode.dirstat = rootdir->fnode.fragstat;
-  root->inode.rstat = rootdir->fnode.rstat;
-  ++root->inode.rstat.rsubdirs;
-  root->inode.accounted_rstat = root->inode.rstat;
+  inode_t &inode = const_cast<inode_t&>(root->get_inode());
+  inode.dirstat = rootdir->fnode.fragstat;
+  inode.rstat = rootdir->fnode.rstat;
+  ++inode.rstat.rsubdirs;
+  inode.accounted_rstat = inode.rstat;
 
   rootdir->mark_complete();
   rootdir->mark_dirty(rootdir->pre_dirty(), mds->mdlog->get_current_segment());
@@ -430,9 +431,9 @@ void MDCache::create_mydir_hierarchy(MDSGather *gather)
     CDentry *sdn = mydir->add_primary_dentry(name.str(), stray);
     sdn->_mark_dirty(mds->mdlog->get_current_segment());
 
-    stray->inode.dirstat = straydir->fnode.fragstat;
+    const_cast<inode_t&>(stray->get_inode()).dirstat = straydir->fnode.fragstat;
 
-    mydir->fnode.rstat.add(stray->inode.rstat);
+    mydir->fnode.rstat.add(stray->get_inode().rstat);
     mydir->fnode.fragstat.nsubdirs++;
     // save them
     straydir->mark_complete();
@@ -452,10 +453,11 @@ void MDCache::create_mydir_hierarchy(MDSGather *gather)
   mydir->fnode.accounted_fragstat = mydir->fnode.fragstat;
   mydir->fnode.accounted_rstat = mydir->fnode.rstat;
 
-  myin->inode.dirstat = mydir->fnode.fragstat;
-  myin->inode.rstat = mydir->fnode.rstat;
-  ++myin->inode.rstat.rsubdirs;
-  myin->inode.accounted_rstat = myin->inode.rstat;
+  inode_t& inode = const_cast<inode_t&>(myin->get_inode());
+  inode.dirstat = mydir->fnode.fragstat;
+  inode.rstat = mydir->fnode.rstat;
+  ++inode.rstat.rsubdirs;
+  inode.accounted_rstat = myin->get_inode().rstat;
 
 
   mydir->mark_complete();
@@ -485,16 +487,17 @@ void MDCache::_create_system_file(CDir *dir, const char *name, CInode *in, MDSIn
   dn->push_projected_linkage(in);
   version_t dpv = dn->pre_dirty();
   
+  inode_t& inode = const_cast<inode_t&>(in->get_inode());
   CDir *mdir = 0;
-  if (in->inode.is_dir()) {
-    in->inode.rstat.rsubdirs = 1;
+  if (in->is_dir()) {
+    inode.rstat.rsubdirs = 1;
 
     mdir = in->get_or_open_dirfrag(this, frag_t());
     mdir->mark_complete();
     mdir->pre_dirty();
   } else
-    in->inode.rstat.rfiles = 1;
-  in->inode.version = dn->pre_dirty();
+    inode.rstat.rfiles = 1;
+  inode.version = dn->pre_dirty();
   
   SnapRealm *realm = dir->get_inode()->find_snaprealm();
   dn->first = in->first = realm->get_newest_seq() + 1;
@@ -534,10 +537,9 @@ void MDCache::_create_system_file_finish(MutationRef& mut, CDentry *dn, version_
   dn->mark_dirty(dpv, mut->ls);
 
   CInode *in = dn->get_linkage()->get_inode();
-  in->inode.version--;
-  in->mark_dirty(in->inode.version + 1, mut->ls);
+  in->mark_dirty(in->get_version(), mut->ls, true);
 
-  if (in->inode.is_dir()) {
+  if (in->is_dir()) {
     CDir *dir = in->get_dirfrag(frag_t());
     assert(dir);
     dir->mark_dirty(1, mut->ls);
@@ -1487,11 +1489,17 @@ CInode *MDCache::cow_inode(CInode *in, snapid_t last)
   assert(last >= in->first);
 
   CInode *oldin = new CInode(this, true, in->first, last);
-  oldin->inode = *in->get_previous_projected_inode();
-  oldin->symlink = in->symlink;
-  oldin->xattrs = *in->get_previous_projected_xattrs();
+  inode_t& inode = const_cast<inode_t&>(oldin->get_inode());
+  inode = *in->get_previous_projected_inode();
+  inode.trim_client_ranges(last);
 
-  oldin->inode.trim_client_ranges(last);
+  const const_xattrs_ref& xattrs = in->get_previous_projected_xattrs(); 
+  if (xattrs) {
+    map<string,bufferptr> *buf = new map<string,bufferptr>;
+    *buf = *xattrs;
+    oldin->xattrs.reset(buf);
+  }
+  oldin->symlink = in->symlink;
 
   in->first = last+1;
 
@@ -1608,7 +1616,7 @@ void MDCache::journal_cow_dentry(MutationImpl *mut, EMetaBlob *metablob,
       if (pcow_inode)
 	*pcow_inode = oldin;
       CDentry *olddn = dn->dir->add_primary_dentry(dn->name, oldin, oldfirst, follows);
-      oldin->inode.version = olddn->pre_dirty();
+      const_cast<inode_t&>(oldin->get_inode()).version = olddn->pre_dirty();
       dout(10) << " olddn " << *olddn << dendl;
       metablob->add_primary_dentry(olddn, 0, true);
       mut->add_cow_dentry(olddn);
@@ -1637,7 +1645,7 @@ void MDCache::journal_cow_inode(MutationRef& mut, EMetaBlob *metablob,
 void MDCache::journal_dirty_inode(MutationImpl *mut, EMetaBlob *metablob, CInode *in, snapid_t follows)
 {
   if (in->is_base()) {
-    metablob->add_root(true, in, in->get_projected_inode());
+    metablob->add_root(true, in);
   } else {
     if (follows == CEPH_NOSNAP && in->last != CEPH_NOSNAP)
       follows = in->first - 1;
@@ -1661,7 +1669,7 @@ void MDCache::journal_dirty_inode(MutationImpl *mut, EMetaBlob *metablob, CInode
 void MDCache::project_rstat_inode_to_frag(CInode *cur, CDir *parent, snapid_t first, int linkunlink)
 {
   CDentry *parentdn = cur->get_projected_parent_dn();
-  inode_t *curi = cur->get_projected_inode();
+  inode_t& curi = const_cast<inode_t&>(*cur->get_projected_inode()); // FIXME
 
   if (cur->first > first)
     first = cur->first;
@@ -1680,7 +1688,7 @@ void MDCache::project_rstat_inode_to_frag(CInode *cur, CDir *parent, snapid_t fi
   dout(20) << " floor of " << floor << " from parent dn " << *parentdn << dendl;
 
   if (cur->last >= floor)
-    _project_rstat_inode_to_frag(*curi, MAX(first, floor), cur->last, parent, linkunlink);
+    _project_rstat_inode_to_frag(curi, MAX(first, floor), cur->last, parent, linkunlink);
       
   for (set<snapid_t>::iterator p = cur->dirty_old_rstats.begin();
        p != cur->dirty_old_rstats.end();
@@ -1806,7 +1814,7 @@ void MDCache::_project_rstat_inode_to_frag(inode_t& inode, snapid_t ofirst, snap
 
 void MDCache::project_rstat_frag_to_inode(nest_info_t& rstat, nest_info_t& accounted_rstat,
 					  snapid_t ofirst, snapid_t last, 
-					  CInode *pin, bool cow_head)
+					  CInode *pin, inode_t *head_pi, bool cow_head)
 {
   dout(10) << "project_rstat_frag_to_inode [" << ofirst << "," << last << "]" << dendl;
   dout(20) << "  frag           rstat " << rstat << dendl;
@@ -1819,7 +1827,7 @@ void MDCache::project_rstat_frag_to_inode(nest_info_t& rstat, nest_info_t& accou
     inode_t *pi;
     snapid_t first;
     if (last == pin->last) {
-      pi = pin->get_projected_inode();
+      pi = head_pi;
       first = MAX(ofirst, pin->first);
       if (first > pin->first) {
 	old_inode_t& old = pin->cow_old_inode(first-1, cow_head);
@@ -1874,7 +1882,7 @@ void MDCache::broadcast_quota_to_client(CInode *in)
   if (!in->is_auth() || in->is_frozen())
     return;
 
-  inode_t *i = in->get_projected_inode();
+  const const_inode_ref& i = in->get_projected_inode();
 
   if (!i->quota.is_enable())
     return;
@@ -2202,9 +2210,11 @@ void MDCache::predirty_journal_parents(MutationRef mut, EMetaBlob *blob,
       for (map<snapid_t,old_rstat_t>::iterator p = parent->dirty_old_rstat.begin();
 	   p != parent->dirty_old_rstat.end();
 	   ++p)
-	project_rstat_frag_to_inode(p->second.rstat, p->second.accounted_rstat, p->second.first, p->first, pin, true);//false);
+	project_rstat_frag_to_inode(p->second.rstat, p->second.accounted_rstat,
+				    p->second.first, p->first, pin, pi, true);//false);
       parent->dirty_old_rstat.clear();
-      project_rstat_frag_to_inode(pf->rstat, pf->accounted_rstat, parent->first, CEPH_NOSNAP, pin, true);//false);
+      project_rstat_frag_to_inode(pf->rstat, pf->accounted_rstat,
+		      		  parent->first, CEPH_NOSNAP, pin, pi, true);//false);
 
       pf->accounted_rstat = pf->rstat;
 
@@ -4364,7 +4374,7 @@ void MDCache::rejoin_scour_survivor_replicas(mds_rank_t from, MMDSCacheRejoin *a
 CInode *MDCache::rejoin_invent_inode(inodeno_t ino, snapid_t last)
 {
   CInode *in = new CInode(this, true, 1, last);
-  in->inode.ino = ino;
+  const_cast<inode_t&>(in->get_inode()).ino = ino;
   in->state_set(CInode::STATE_REJOINUNDEF);
   add_inode(in);
   rejoin_undef_inodes.insert(in);
@@ -4379,7 +4389,7 @@ CDir *MDCache::rejoin_invent_dirfrag(dirfrag_t df)
     in = rejoin_invent_inode(df.ino, CEPH_NOSNAP);
   if (!in->is_dir()) {
     assert(in->state_test(CInode::STATE_REJOINUNDEF));
-    in->inode.mode = S_IFDIR;
+    const_cast<inode_t&>(in->get_inode()).mode = S_IFDIR;
   }
   CDir *dir = in->get_or_open_dirfrag(this, df.frag);
   dir->state_set(CDir::STATE_REJOINUNDEF);
@@ -4691,8 +4701,9 @@ void MDCache::handle_cache_rejoin_ack(MMDSCacheRejoin *ack)
       if (!diri) {
 	// barebones inode; the full inode loop below will clean up.
 	diri = new CInode(this, false);
-	diri->inode.ino = p->first.ino;
-	diri->inode.mode = S_IFDIR;
+	inode_t& inode = const_cast<inode_t&>(diri->get_inode());
+	inode.ino = p->first.ino;
+	inode.mode = S_IFDIR;
 	add_inode(diri);
 	if (MDS_INO_MDSDIR(from) == p->first.ino) {
 	  diri->inode_auth = mds_authority_t(from, CDIR_AUTH_UNKNOWN);
@@ -4762,8 +4773,9 @@ void MDCache::handle_cache_rejoin_ack(MMDSCacheRejoin *ack)
 	  if (!in) {
 	    // barebones inode; assume it's dir, the full inode loop below will clean up.
 	    in = new CInode(this, false, q->second.first, q->first.snapid);
-	    in->inode.ino = q->second.ino;
-	    in->inode.mode = S_IFDIR;
+	    inode_t& inode = const_cast<inode_t&>(in->get_inode());
+	    inode.ino = q->second.ino;
+	    inode.mode = S_IFDIR;
 	    add_inode(in);
 	    dout(10) << " add inode " << *in << dendl;
 	  } else if (in->get_parent_dn()) {
@@ -5208,7 +5220,7 @@ void MDCache::choose_lock_states_and_reconnect_caps()
        ++i) {
     CInode *in = i->second;
  
-    if (in->is_auth() && !in->is_base() && in->inode.is_dirty_rstat())
+    if (in->is_auth() && !in->is_base() && in->get_inode().is_dirty_rstat())
       in->mark_dirty_rstat();
 
     in->choose_lock_states();
@@ -5836,8 +5848,9 @@ void MDCache::identify_files_to_recover(vector<CInode*>& recover_q, vector<CInod
       continue;
     
     bool recover = false;
-    for (map<client_t,client_writeable_range_t>::iterator p = in->inode.client_ranges.begin();
-	 p != in->inode.client_ranges.end();
+    const inode_t& inode = in->get_inode();
+    for (map<client_t,client_writeable_range_t>::const_iterator p = inode.client_ranges.begin();
+	 p != inode.client_ranges.end();
 	 ++p) {
       Capability *cap = in->get_client_cap(p->first);
       if (!cap) {
@@ -5886,7 +5899,7 @@ void MDCache::do_file_recover()
 
 void MDCache::truncate_inode(CInode *in, LogSegment *ls)
 {
-  inode_t *pi = in->get_projected_inode();
+  const const_inode_ref& pi = in->get_projected_inode();
   dout(10) << "truncate_inode "
 	   << pi->truncate_from << " -> " << pi->truncate_size
 	   << " on " << *in
@@ -5911,15 +5924,15 @@ struct C_IO_MDC_TruncateFinish : public MDCacheIOContext {
 
 void MDCache::_truncate_inode(CInode *in, LogSegment *ls)
 {
-  inode_t *pi = &in->inode;
+  const inode_t& pi = in->get_inode();
   dout(10) << "_truncate_inode "
-	   << pi->truncate_from << " -> " << pi->truncate_size
+	   << pi.truncate_from << " -> " << pi.truncate_size
 	   << " on " << *in << dendl;
 
-  assert(pi->is_truncating());
-  assert(pi->truncate_size < (1ULL << 63));
-  assert(pi->truncate_from < (1ULL << 63));
-  assert(pi->truncate_size < pi->truncate_from);
+  assert(pi.is_truncating());
+  assert(pi.truncate_size < (1ULL << 63));
+  assert(pi.truncate_from < (1ULL << 63));
+  assert(pi.truncate_size < pi.truncate_from);
 
   in->auth_pin(this);
 
@@ -5935,9 +5948,9 @@ void MDCache::_truncate_inode(CInode *in, LogSegment *ls)
     assert(in->last == CEPH_NOSNAP);
   }
   dout(10) << "_truncate_inode  snapc " << snapc << " on " << *in << dendl;
-  mds->filer->truncate(in->inode.ino, &in->inode.layout, *snapc,
-		       pi->truncate_size, pi->truncate_from-pi->truncate_size,
-		       pi->truncate_seq, utime_t(), 0,
+  mds->filer->truncate(in->ino(), &pi.layout, *snapc,
+		       pi.truncate_size, pi.truncate_from - pi.truncate_size,
+		       pi.truncate_seq, utime_t(), 0,
 		       0, new C_OnFinisher(new C_IO_MDC_TruncateFinish(this, in,
 								       ls),
 					   &mds->finisher));
@@ -6401,7 +6414,7 @@ void MDCache::trim_non_auth()
 
       if (dn->get_dir()->get_inode()->is_stray()) {
 	dn->state_set(CDentry::STATE_STRAY);
-	if (dnl->is_primary() && dnl->get_inode()->inode.nlink == 0)
+	if (dnl->is_primary() && dnl->get_inode()->get_nlink() == 0)
 	  dnl->get_inode()->state_set(CInode::STATE_ORPHAN);
       }
 
@@ -8159,7 +8172,7 @@ void MDCache::handle_open_ino(MMDSOpenIno *m)
 	  break;
 	CInode *diri = pdn->get_dir()->get_inode();
 	reply->ancestors.push_back(inode_backpointer_t(diri->ino(), pdn->name,
-						       in->inode.version));
+						       in->get_version()));
 	in = diri;
       }
     } else {
@@ -8921,7 +8934,7 @@ void MDCache::eval_stray(CDentry *dn, bool delay)
   }
 
   // purge?
-  if (in->inode.nlink == 0) {
+  if (in->get_nlink() == 0) {
     if (in->is_dir()) {
       // past snaprealm parents imply snapped dentry remote links.
       // only important for directories.  normal file data snaps are handled
@@ -8974,7 +8987,7 @@ void MDCache::eval_stray(CDentry *dn, bool delay)
       purge_stray(dn);
     }
   }
-  else if (in->inode.nlink >= 1) {
+  else if (in->get_nlink() >= 1) {
     // trivial reintegrate?
     if (!in->remote_parents.empty()) {
       CDentry *rlink = *in->remote_parents.begin();
@@ -8996,7 +9009,7 @@ void MDCache::eval_stray(CDentry *dn, bool delay)
 }
 
 void MDCache::try_remove_dentries_for_stray(CInode* diri) {
-  assert(diri->inode.nlink == 0);
+  assert(diri->get_inode().nlink == 0);
   if (diri->has_dirfrags()) {
     list<CDir*> ls;
     diri->get_nested_dirfrags(ls);
@@ -9080,7 +9093,7 @@ void MDCache::purge_stray(CDentry *dn)
     for (list<frag_t>::iterator p = ls.begin();
          p != ls.end();
          ++p) {
-      object_t oid = CInode::get_object_name(in->inode.ino, *p, "");
+      object_t oid = CInode::get_object_name(in->ino(), *p, "");
       dout(10) << "purge_stray remove dirfrag " << oid << dendl;
       mds->objecter->remove(oid, oloc, nullsnapc, ceph_clock_now(g_ceph_context),
                             0, NULL, gather.new_sub());
@@ -9101,26 +9114,26 @@ void MDCache::purge_stray(CDentry *dn)
     assert(in->last == CEPH_NOSNAP);
   }
 
+  const const_inode_ref& pi = in->get_projected_inode();
   if (in->is_file()) {
-    uint64_t period = (uint64_t)in->inode.layout.fl_object_size *
-		      (uint64_t)in->inode.layout.fl_stripe_count;
-    uint64_t to = in->inode.get_max_size();
-    to = MAX(in->inode.size, to);
+    uint64_t period = (uint64_t)pi->layout.fl_object_size *
+		      (uint64_t)pi->layout.fl_stripe_count;
+    uint64_t to = pi->get_max_size();
+    to = MAX(pi->size, to);
     // when truncating a file, the filer does not delete stripe objects that are
     // truncated to zero. so we need to purge stripe objects up to the max size
     // the file has ever been.
-    to = MAX(in->inode.max_size_ever, to);
+    to = MAX(pi->max_size_ever, to);
     if (to && period) {
       uint64_t num = (to + period - 1) / period;
       dout(10) << "purge_stray 0~" << to << " objects 0~" << num
 	       << " snapc " << snapc << " on " << *in << dendl;
-      mds->filer->purge_range(in->inode.ino, &in->inode.layout, *snapc,
+      mds->filer->purge_range(pi->ino, &pi->layout, *snapc,
 			      0, num, ceph_clock_now(g_ceph_context), 0,
 			      gather.new_sub());
     }
   }
 
-  inode_t *pi = in->get_projected_inode();
   object_t oid = CInode::get_object_name(pi->ino, frag_t(), "");
   // remove the backtrace object if it was not purged
   if (!gather.has_subs()) {
@@ -9131,7 +9144,7 @@ void MDCache::purge_stray(CDentry *dn)
 			  NULL, gather.new_sub());
   }
   // remove old backtrace objects
-  for (vector<int64_t>::iterator p = pi->old_pools.begin();
+  for (vector<int64_t>::const_iterator p = pi->old_pools.begin();
        p != pi->old_pools.end();
        ++p) {
     object_locator_t oloc(*p);
@@ -9189,7 +9202,7 @@ void MDCache::_purge_stray_purged(CDentry *dn, int r)
       pf->fragstat.nsubdirs--;
     else
       pf->fragstat.nfiles--;
-    pf->rstat.sub(in->inode.accounted_rstat);
+    pf->rstat.sub(in->get_inode().accounted_rstat);
 
     le->metablob.add_dir_context(dn->dir);
     EMetaBlob::dirlump& dl = le->metablob.add_dir(dn->dir, true);
@@ -9296,7 +9309,7 @@ void MDCache::migrate_stray(CDentry *dn, mds_rank_t to)
   assert(in);
   CInode *diri = dn->dir->get_inode();
   assert(diri->is_stray());
-  dout(10) << "migrate_stray from mds." << MDS_INO_STRAY_OWNER(diri->inode.ino)
+  dout(10) << "migrate_stray from mds." << MDS_INO_STRAY_OWNER(diri->ino())
 	   << " to mds." << to
 	   << " " << *dn << " " << *in << dendl;
 

@@ -316,7 +316,7 @@ public:
 				    CDir *parent, int linkunlink=0);
   void project_rstat_frag_to_inode(nest_info_t& rstat, nest_info_t& accounted_rstat,
 				   snapid_t ofirst, snapid_t last, 
-				   CInode *pin, bool cow_head);
+				   CInode *pin, inode_t *head_pi, bool cow_head);
   void broadcast_quota_to_client(CInode *in);
   void predirty_journal_parents(MutationRef mut, EMetaBlob *blob,
 				CInode *in, CDir *parent,
@@ -899,7 +899,7 @@ public:
   void eval_remote(CDentry *dn);
 
   void maybe_eval_stray(CInode *in, bool delay=false) {
-    if (in->inode.nlink > 0 || in->is_base() || is_readonly())
+    if (in->get_nlink ()> 0 || in->is_base() || is_readonly())
       return;
     CDentry *dn = in->get_projected_parent_dn();
     if (!dn->state_test(CDentry::STATE_PURGING) &&
@@ -948,7 +948,7 @@ public:
     dn->encode_replica(to, bl);
   }
   void replicate_inode(CInode *in, mds_rank_t to, bufferlist& bl) {
-    ::encode(in->inode.ino, bl);  // bleh, minor assymetry here
+    ::encode(in->ino(), bl);  // bleh, minor assymetry here
     ::encode(in->last, bl);
     in->encode_replica(to, bl);
   }

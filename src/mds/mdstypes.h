@@ -456,7 +456,7 @@ struct inode_t {
     memset(&layout, 0, sizeof(layout));
   }
 
-  uint64_t get_layout_size_increment() {
+  uint64_t get_layout_size_increment() const {
     return (uint64_t)layout.fl_object_size * (uint64_t)layout.fl_stripe_count;
   }
 

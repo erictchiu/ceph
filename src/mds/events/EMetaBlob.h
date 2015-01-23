@@ -65,9 +65,9 @@ public:
     string  dn;         // dentry
     snapid_t dnfirst, dnlast;
     version_t dnv;
-    inode_t inode;      // if it's not
+    const_inode_ref inode;      // if it's not
+    const_xattrs_ref xattrs;
     fragtree_t dirfragtree;
-    map<string,bufferptr> xattrs;
     string symlink;
     bufferlist snapbl;
     __u8 state;
@@ -77,16 +77,16 @@ public:
     fullbit(const fullbit& o);
     const fullbit& operator=(const fullbit& o);
 
-    fullbit(const string& d, snapid_t df, snapid_t dl, 
-	    version_t v, const inode_t& i, const fragtree_t &dft, 
-	    const map<string,bufferptr> &xa, const string& sym,
+    fullbit(const string& d, snapid_t df, snapid_t dl, version_t v,
+	    const const_inode_ref& i, const const_xattrs_ref& xa,
+	    const fragtree_t &dft, const string& sym, 
 	    const bufferlist &sbl, __u8 st,
 	    const old_inodes_t *oi = NULL) :
       dn(d), dnfirst(df), dnlast(dl), dnv(v), inode(i), xattrs(xa), state(st)
     {
-      if (i.is_symlink())
+      if (i->is_symlink())
 	symlink = sym;
-      if (i.is_dir()) {
+      if (i->is_dir()) {
 	dirfragtree = dft;
 	snapbl = sbl;
       }
@@ -111,7 +111,7 @@ public:
 
     void print(ostream& out) const {
       out << " fullbit dn " << dn << " [" << dnfirst << "," << dnlast << "] dnv " << dnv
-	  << " inode " << inode.ino
+	  << " inode " << inode->ino
 	  << " state=" << state << std::endl;
     }
     string state_string() const {
@@ -430,7 +430,8 @@ private:
     in->last_journaled = event_seq;
     //cout << "journaling " << in->inode.ino << " at " << my_offset << std::endl;
 
-    const inode_t *pi = in->get_projected_inode();
+    const const_inode_ref& pi = in->get_projected_inode();
+    const const_xattrs_ref& px = in->get_projected_xattrs();
     if ((state & fullbit::STATE_DIRTY) && pi->is_backtrace_updated())
       state |= fullbit::STATE_DIRTYPARENT;
 
@@ -443,11 +444,9 @@ private:
     lump.add_dfull(ceph::shared_ptr<fullbit>(new fullbit(dn->get_name(), 
                                                          dn->first, dn->last,
                                                          dn->get_projected_version(), 
-                                                         *pi, in->dirfragtree,
-                                                         *in->get_projected_xattrs(),
+                                                         pi, px, in->dirfragtree,
                                                          in->symlink, snapbl,
-                                                         state,
-                                                         &in->old_inodes)));
+                                                         state, &in->old_inodes)));
   }
 
   // convenience: primary or remote?  figure it out.
@@ -478,33 +477,28 @@ private:
     add_primary_dentry(dn, 0, dirty, dirty_parent, dirty_pool);
   }
 
-  void add_root(bool dirty, CInode *in, const inode_t *pi=0, fragtree_t *pdft=0, bufferlist *psnapbl=0,
-		    map<string,bufferptr> *px=0) {
+  void add_root(bool dirty, CInode *in) {
     in->last_journaled = event_seq;
     //cout << "journaling " << in->inode.ino << " at " << my_offset << std::endl;
 
-    if (!pi) pi = in->get_projected_inode();
-    if (!pdft) pdft = &in->dirfragtree;
-    if (!px) px = in->get_projected_xattrs();
-
     bufferlist snapbl;
-    if (psnapbl)
-      snapbl = *psnapbl;
-    else
-      in->encode_snap_blob(snapbl);
+    in->encode_snap_blob(snapbl);
 
     for (list<ceph::shared_ptr<fullbit> >::iterator p = roots.begin(); p != roots.end(); ++p) {
-      if ((*p)->inode.ino == in->ino()) {
+      if ((*p)->inode->ino == in->ino()) {
 	roots.erase(p);
 	break;
       }
     }
 
     string empty;
-    roots.push_back(ceph::shared_ptr<fullbit>(new fullbit(empty, in->first, in->last, 0, *pi,
-							      *pdft, *px, in->symlink, snapbl,
-							      dirty ? fullbit::STATE_DIRTY : 0,
-							      &in->old_inodes)));
+    const const_inode_ref& pi = in->get_projected_inode();
+    const const_xattrs_ref& px = in->get_projected_xattrs();
+    roots.push_back(ceph::shared_ptr<fullbit>(new fullbit(empty, in->first, in->last, 0,
+				    			  pi, px, in->dirfragtree,
+							  in->symlink, snapbl,
+							  dirty ? fullbit::STATE_DIRTY : 0,
+							  &in->old_inodes)));
   }
   
   dirlump& add_dir(CDir *dir, bool dirty, bool complete=false) {
